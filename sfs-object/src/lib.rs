@@ -106,6 +106,13 @@ impl SfsObjectClient {
         Ok(())
     }
 
+    /// Gets the metadata of the object at the specified path.
+    pub async fn stat(&self, path: &str) -> Result<ObjectEntry, Error> {
+        let stat = SFS_LIB.get().unwrap().stat;
+        let entry = stat(self.0, path.into()).await.into_result()?;
+        Ok(entry)
+    }
+
     /// Opens the object at the specified path for put.
     ///
     /// Callers should write data with [`ObjectWriter::write_at`] and close the writer with
@@ -184,7 +191,7 @@ impl ObjectWriter {
     pub async fn close(&mut self) -> Result<(), Error> {
         let close_write = SFS_LIB.get().unwrap().close_write;
         close_write(self.0).await.into_result()?;
-	self.0 = null_mut();
+        self.0 = null_mut();
         Ok(())
     }
 }

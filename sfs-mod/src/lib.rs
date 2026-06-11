@@ -43,6 +43,8 @@ pub struct PluginMod {
 
     pub delete: extern "C" fn(client: *const (), path: RStr) -> FfiFuture<Result<()>>,
 
+    pub stat: extern "C" fn(client: *const (), path: RStr) -> FfiFuture<Result<ObjectEntry>>,
+
     pub open_for_put: extern "C" fn(client: *const (), path: RStr) -> FfiFuture<Result<*mut ()>>,
     pub write_at: extern "C" fn(
         fh: *const (),

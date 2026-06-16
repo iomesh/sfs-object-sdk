@@ -1,44 +1,108 @@
-# sfs-object-sdk
+# SFS Object SDK
 
-SFS 对象存储客户端 SDK。
+SFS Object SDK 是一个 Rust workspace，用于通过动态插件访问 SFS 对象存储能力。
 
-## 概述
+项目主要包含两个 crate：
 
-本仓库提供 SFS 对象存储的 C 语言客户端头文件与示例程序。典型流程为：挂载命名空间 → 元数据操作（lookup / create 等）→ 异步读写 → 卸载命名空间。
+- `sfs-mod`：定义插件 ABI、FFI 类型和插件导出入口名称。
+- `sfs-object`：面向使用方的对象存储客户端封装，负责加载插件并调用对象操作接口。
 
-## 示例
+## 功能概览
+
+- 动态加载对象存储插件库。
+- 初始化和关闭对象存储客户端。
+- 列举、删除对象。
+- 打开对象进行 put 写入或 get 读取。
+- 支持基于 offset 的随机读写。
+
+## 基本用法
+
+使用前需要先加载插件动态库。插件库必须导出 `get_sfs_object_plugin_mod` 符号。
+
+```rust
+use sfs_object::{load_sfs_library, SfsObjectClient};
+
+async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    load_sfs_library("/path/to/libsfs_object_plugin.so")?;
+
+    let mut client = SfsObjectClient::init(
+        "default",
+        "/path/to/kubeconfig",
+        vec!["https://127.0.0.1:6443".to_string()],
+    )
+    .await?;
+
+    client.close().await;
+    Ok(())
+}
+```
+
+## 列举对象
+
+`list_objects` 返回对象列表和 `eof` 标记。`eof` 为 `true` 表示本次列举已经到达末尾。
+
+```rust
+let (objects, eof) = client.list_objects("/data", 0, 1024).await?;
+```
+
+参数说明：
+
+- `path`：要列举的路径。
+- `whence`：分页游标。
+- `buff_size`：单次请求的缓冲区大小。
+
+## 写入对象
+
+使用 `open_for_put` 打开一个写入会话，然后通过 `ObjectWriter::write_at` 写入数据，最后调用 `ObjectWriter::close` 提交内容。
+
+```rust
+let mut writer = client.open_for_put("/data/object.txt").await?;
+writer.write_at(0, b"hello").await?;
+writer.close().await?;
+```
+
+注意事项：
+
+- 如果同一个 object 正在被其他 writer 写入，`open_for_put` 会失败。
+- `write_at` 是同步持久化操作，成功返回后写入的数据保证已经持久化。
+- `close` 完成后对象会立即可见；`close` 完成前对象不可见。
+- 当 `offset` 按 1 MiB 对齐且写入内容长度为 1 MiB 时，可以获得最佳性能。
+
+## 读取对象
+
+使用 `open_for_get` 打开一个读取会话，然后通过 `ObjectReader::read_at` 按 offset 读取数据。
+
+```rust
+let reader = client.open_for_get("/data/object.txt").await?;
+let mut buff = [0; 1024];
+let nread = reader.read_at(0, &mut buff).await?;
+```
+
+性能建议：
+
+- 当 `offset` 按 1 MiB 对齐且 `buff` 长度为 1 MiB 时，可以获得最佳性能。
+
+## 删除对象
+
+```rust
+client.delete("/data/object.txt").await?;
+```
+
+## 插件接口
+
+插件侧需要实现 `sfs-mod` 中定义的 `PluginMod`，并通过下面的符号导出：
+
+```rust
+pub const GET_PLUGIN_FN_NAME: &str = "get_sfs_object_plugin_mod";
+```
+
+客户端通过 `load_sfs_library` 加载动态库后，会从该符号获取插件函数表。
+
+## 开发
+
+常用检查命令：
 
 ```bash
-make -C examples
-
-./examples/file_rw_example <ns_name> [filename]
-./examples/list_dir_example <ns_name> [path]
-./examples/getattr_example <ns_name> [path]
-```
-
-## 说明
-
-### 1. 接口层级
-
-当前接口比较底层，直接对 **inode** 进行操作（如 `sfs_lookup`、`sfs_create`、`sfs_read` / `sfs_write`）。
-
-后续计划改为类似 **POSIX `open` / `close`** 的高层接口，对**文件路径**进行操作，降低使用门槛。
-
-### 2. 语言与异步模型
-
-当前为 **C 语言**风格 API（如 `include/sfs_client.h` 中的绑定）。
-
-后续计划提供 **Rust** 版本，并预计提供适配 **tokio** 框架的异步接口。
-
-### 3. 错误与重试
-
-客户端内部已对**临时性错误**内置重试逻辑。
-
-业务侧也可根据 API 返回的 **错误码**（`CError`）自行判断是否重试，例如网络超时（`TimedOut`）、服务不可用（`Unavailable`）等场景。
-
-## 目录结构
-
-```
-include/sfs_client.h   # C API 头文件
-examples/              # 示例程序
+cargo check
+cargo test
 ```

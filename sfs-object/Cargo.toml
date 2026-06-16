@@ -1,0 +1,9 @@
+[package]
+name = "sfs-object"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sfs-mod.workspace = true
+once_cell.workspace = true
+libloading.workspace = true
